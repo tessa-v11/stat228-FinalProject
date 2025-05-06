@@ -1,0 +1,272 @@
+---
+title: "Gender and Heart Disease: Do the Warning Signs Look Different?"
+subtitle: "STAT228 Final Project"
+author: "Tessa Volpe"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: readable
+    toc: true
+    toc_float: true
+  pdf_document:
+    toc: true
+---
+
+# Introduction
+
+Cardiovascular disease is the leading cause of death worldwide, responsible for an estimated 17.9 million deaths each year ^[https://www.who.int/health-topics/cardiovascular-diseases#tab=tab_1]. Four out of five of these deaths are due to heart attacks and strokes - many of which could be preventable with early detection and management. 
+
+Are the warning signs the same for everyone? In this project, I explore whether the factors associated with heart disease differ by gender. Understanding these differences could help improve early detection and prevention strategies for both men and women. In this project, I use a heart disease prediction data set to explore the question:
+
+**Do patient characteristics associated with heart disease differ by gender?**
+
+```{r setup, warning = FALSE, include = FALSE}
+library(tidyverse)
+library(janitor)
+library(caret)
+library(pROC)
+```
+
+## Heart Disease Dataset
+
+```{r import, include = FALSE}
+heart_df <- read.csv("heart.csv")
+```
+
+For this analysis, I utilize the [Heart Failure Prediction Dataset](https://www.kaggle.com/datasets/fedesoriano/heart-failure-prediction) ^[fedesoriano. (September 2021). Heart Failure Prediction Dataset. 
+    Retrieved 4/18/2025 from https://www.kaggle.com/fedesoriano/heart-failure-prediction.] available on Kaggle. This dataset combines demographic and medical information from five widely-used heart disease studies into a unified, cleaned dataset. It supports data-driven approaches to predict heart disease and identify key contributing factors.
+
+The dataset contains 918 patient records and 12 different variables, including 11 predictive attributes and 1 outcome variable:
+
+- **Age**: age of the patient
+- **Sex**: sex of the patient
+- **ChestPainType**: type of chest pain
+- **RestingBP**: resting blood pressure (mmHg)
+- **Cholesterol**: serum cholesterol (mg/dL)
+- **FastingBS**: fasting blood sugar
+- **RestingECG**: resting electrocardiogram results
+- **MaxHR**: maximum heart rate achieved
+- **ExerciseAngina**: exercise-induced angina 
+- **Oldpeak**: ST depression induced by exercise relative to rest
+- **ST_Slope**: slope of the ST segment during peak exercise
+- **HeartDisease**: output class (1 = has heart disease, 0 = no disease)
+
+# Data Wrangling
+
+Before visualizing and modeling, it is important to ensure the dataset is clean and variables are formatted for analysis.
+
+## Tidy
+
+To begin, I visually ensured that the dataset was in a tidy format, where each row represents a patient, and each column is a variable.
+
+```{r glimpse}
+glimpse(heart_df)
+```
+
+Next, I checked for missing values.
+
+```{r missing values}
+sum(is.na(heart_df))
+```
+
+To standardize column names to `snake_case`, I used the `janitor` package.
+
+```{r janitor}
+heart_df <- heart_df |>
+  clean_names()
+```
+
+The dataset was already quite clean, with no missing values. Standardizing column names improves readability and consistency.
+
+## Transform
+
+To further prepare data for analysis, I performed several transformations:
+
+- Converted categorical variables to factors
+- Relabeled select variables for clarity and future visualization purposes
+- Renamed ambiguous column names like `oldpeak` and `max_hr` for easier interpretation
+
+```{r wrangle}
+heart_df <- heart_df |>
+  mutate(sex = factor(sex, labels = c("Female", "Male"))) |>
+  mutate(chest_pain_type = factor(chest_pain_type)) |>
+  mutate(fasting_bs = factor(fasting_bs)) |>
+  mutate(exercise_angina = factor(exercise_angina, labels = c("No", "Yes"))) |>
+  mutate(heart_disease = factor(heart_disease, labels = c("No Disease", "Disease"))) |>
+  rename(st_depression = oldpeak) |>
+  rename(max_heart_rate = max_hr)
+```
+
+Lastly, I created a lengthened version of the data frame for the numerical variables to facilitate later analysis.
+
+```{r lengthen}
+heart_long <- heart_df |>
+  pivot_longer(
+    cols = c(cholesterol, resting_bp, max_heart_rate, st_depression),
+    names_to = "variable",
+    values_to = "value"
+  )
+```
+
+# Visualize
+
+The central research question remains: **Do patient characteristics associated with heart disease differ by gender?** The following visualizations aim to explain whether variables related to heart disease differ between males and females, both in a general distribution and in their relationship to heart disease diagnosis.
+
+## Plot 1 - Proportion of Heart Disease by Gender
+
+Are males or females more likely to be diagnosed with heart disease?
+
+```{r disease by gender, echo = FALSE}
+ggplot(heart_df, aes(x = sex, fill = heart_disease)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("No Disease" = "dodgerblue3", "Disease" = "orange2")) +
+  labs(
+    title = "Proportion of Heart Disease by Gender",
+    subtitle = "Data from Kaggle.com user fedesoriano",
+    x = "Gender",
+    y = "Proportion",
+    fill = "Heart Disease"
+  )
+```
+
+This stacked bar plot shows the proportion of males and females diagnosed with heart disease. ~63% of males and ~25% of females in this dataset have heart disease, indicating a higher prevalence among males.
+
+## Plot 2 - Chest Pain Type by Gender and Heart Disease
+
+Do chest pain types linked to heart disease differ between men and women?
+
+```{r pain type, echo = FALSE}
+ggplot(heart_df, aes(x = chest_pain_type, fill = heart_disease)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("No Disease" = "dodgerblue3", "Disease" = "orange2"))+
+  facet_wrap(~ sex) +
+  labs(
+    title = "Chest Pain Type by Gender and Heart Disease",
+    subtitle = "Data from Kaggle.com user fedesoriano",
+    caption = "ASY = Asymptomatic, ATA = Atypical Angina, NAP = Non-Anginal Pain, TA = Typical Angina",
+    x = "Chest Pain Type",
+    y = "Proportion",
+    fill = "Heart Disease"
+  )
+```
+
+*Angina is the medical term that describes chest pain/discomfort.*
+
+Asymptomatic pain shows a strong indication of heart disease in both males and females. However, this pain type means that the individual was experiencing **no** chest pain, making it a difficult indication. This instead affirms that heart disease can be present even without classic symptoms and emphasizes the importance of screening for all genders, even when reporting no pain.
+
+Among subjects who *did* report symptoms (typical angina, atypical angina, or non-anginal), males were more likely than females to have heart disease, suggesting that the same symptom may be more predictive for one gender than the other.
+
+## Plot 3 - Exercise-Induced Angina by Gender and Heart Disease
+
+Is exercised-induced angina a stronger indicator of heart disease in males or females?
+
+```{r exercise angina, echo = FALSE}
+ggplot(heart_df, aes(x = exercise_angina, fill = heart_disease)) +
+  geom_bar(position = "fill") +
+  scale_fill_manual(values = c("No Disease" = "dodgerblue3", "Disease" = "orange2"))+
+  facet_wrap(~sex) +
+  labs(
+    title = "Exercise Angina by Gender and Heart Disease",
+    subtitle = "Data from Kaggle.com user fedesoriano",
+    x = "Exercise-Induced Angina",
+    y = "Proportion",
+    fill = "Heart Disease"
+  )
+```
+
+This chart shows that exercise-induced angina is associated with a higher likelihood of heart disease in both genders. However, the association appears stronger in males, where a larger proportion of those experiencing exercise-induced angina had heart disease.
+
+This suggests that while exercise-induced chest pain is a general risk factor, it may be a more reliable predictor in male patients, or at least more strongly associated in this dataset.
+
+## Plot 4 - Health Indicators by Gender and Heart Disease
+
+Do numeric health indicators differ between males and females with and without heart disease?
+
+```{r indicators, echo = FALSE}
+ggplot(heart_long, aes(x = heart_disease, y = value, fill = sex)) +
+  geom_boxplot() +
+  scale_fill_manual(values = c("Female" = "pink", "Male" = "lightblue")) +
+  facet_wrap(~variable, scales = "free_y") +
+  labs(
+    title = "Distribution of Health Indicators by Gender and Heart Disease",
+    subtitle = "Data from Kaggle.com user fedesoriano",
+    x = "Heart Disease Diagnosis",
+    y = "Value",
+    fill = "Gender"
+  )
+```
+
+*ST segment represents the period when the ventricles are resting. A depression in the segment can indicate reduced blood flow to the heart muscle, which can be a sign of heart disease ^[https://www.sciencedirect.com/topics/medicine-and-dentistry/st-segment#].*
+
+This faceted boxplot shows how four key health indicators - cholesterol, resting blood pressure, max heart rate, and ST depression - relate to heart disease across genders. 
+
+Key insights:
+
+- **Cholesterol**: Males show a large variation by diagnosis status, while female values appear more consistent regardless of diagnosis.  
+- **Max Heart Rate**: Males show a more distinct separation in max heart rate values by diagnosis status than females. The difference is still present among females, but less distinct.    
+- **Resting Blood Pressure**: There is a larger difference in levels between females with and without heart disease than there is for males.  
+- **ST depression**: Higher ST depression is associated with heart disease in both genders, but the separation is more pronounced in males.
+
+These results suggest that the predictive strength of certain indicators does vary by gender.
+
+# Model and Analyze
+
+To more formally assess which patient characteristics are associated with heart disease and whether these associations differ by gender, I built separate logistic regression models for males and females. Logistic regression estimates the odds of having heart disease based on predictor variables such as age, cholesterol, heart rate, and more.
+
+```{r separate gender, include = FALSE}
+heart_df_male <- heart_df |>
+  filter(sex == "Male")
+
+heart_df_female <- heart_df |>
+  filter(sex == "Female")
+```
+
+To fit the logistic regression models:
+
+```{r parameters}
+male_fit <- glm(heart_disease ~ age + cholesterol + max_heart_rate + st_depression + chest_pain_type + exercise_angina,
+                  data = heart_df_male, 
+                  family = binomial)
+
+female_fit <- glm(heart_disease ~ age + cholesterol + max_heart_rate + st_depression + chest_pain_type + exercise_angina,
+                    data = heart_df_female, 
+                    family = binomial)
+```
+
+```{r roc curve, include = FALSE}
+male_predicted <- predict(male_fit, type = "response")
+
+male_roc_obj <- roc(heart_df_male$heart_disease, male_predicted)
+
+female_predicted <- predict(female_fit, type = "response")
+
+female_roc_obj <- roc(heart_df_female$heart_disease, female_predicted)
+```
+
+A ROC curve will evaluate how well the logistic regression model can predict disease based on patient characteristics - separately for each gender. It compares the model's ability to distinguish between patients with and without heart disease, separately for men and women. The Area Under the Curve (AUC) for each model provides a summary measure: the closer to 1, the better.
+
+If the AUC is much higher for one gender, it suggests that the selected predictor variables (like cholesterol, ST depression, etc.) are more predictive of an accurate heart disease diagnosis for that gender. Let's take a look:
+
+```{r plot roc, echo = FALSE}
+plot(male_roc_obj, col = "lightblue", lwd = 2, main = "ROC Curves by Gender")
+
+plot(female_roc_obj, col = "pink", lwd = 2, add = TRUE)
+```
+
+Male (blue) AUC = `r auc(male_roc_obj)`   
+
+Female (pink) AUC = `r auc(female_roc_obj)`  
+
+Within this dataset, the model is only slightly more accurate in predicting heart disease for males than for females. The almost equal performance suggests that the overall predictive strength of the selected characteristics is similar for both genders. However, earlier visualizations showed that individual predictor variables, such as exercise-induced angina, chest pain type, and ST depression, exhibited different patterns by gender. This supports the idea that while models can perform similarly overall, the way specific risk factors relate to disease may still vary by gender.
+
+# Conclusion
+
+This analysis set out to answer the question: 
+
+**Do patient characteristics associated with heart disease differ by gender?** 
+
+The answer, based on this dataset, appears to be yes — but not in a simple way. While overall model accuracy was very close between males and females, several individual predictor variables behaved differently across genders. For example, exercise-induced angina and ST depression were more strongly associated with heart disease in men, while resting blood pressure showed a clearer distinction in women. These differences do suggest that certain warning signs may carry more predictive weight in one gender than the other.
+
+The results suggest that while overall predictive power is similar between genders, the role of individual predictors varies—highlighting the importance of gender-specific insights in heart disease diagnosis.
+
+# References
